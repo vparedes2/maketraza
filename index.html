@@ -172,7 +172,7 @@ const fmtI=v=>Math.round(v).toLocaleString('es-AR');
 const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const HOSE={12:{di:305,rat:200,pmax:12,pdes:10.5,qd:1050,note:'12": 200 psi (14 kg/cm²) según manual; operación hasta 12 kg/cm². Techo práctico de caudal ≈ 1.050 m³/h.'},
             14:{di:356,rat:150,pmax:9,pdes:7.9,qd:1400,note:'14": presión de trabajo y diámetro interno ESTIMADOS. Cargá los valores de la ficha del fabricante.'},
-            16:{di:406,rat:150,pmax:6.9,pdes:6.0,qd:1865,note:'16": 150 psi según manual; impulsión máx. con margen 6,9 kg/cm². Techo práctico ≈ 1.865 m³/h.'}};
+            16:{di:406,rat:150,pmax:7.4,pdes:6.9,qd:1865,note:'16": 150 psi según manual: máximo 7,4 kg/cm² (factor 0,7) y 6,9 kg/cm² de diseño con margen. Techo práctico ≈ 1.865 m³/h.'}};
 let D=12, TR=null, DEMO=true, RES=null;
 
 // ---------- geometría ----------
@@ -291,6 +291,8 @@ function solve(){const p=params();const S=resample(TR,10);const n=S.length;const
   if(V>4)issues.push({c:'crit',t:`Velocidad ${fmt(V)} m/s: supera 4 m/s. Subí el diámetro o bajá el caudal.`});else if(V>3.8)issues.push({c:'warn',t:`Velocidad ${fmt(V)} m/s, cerca del límite de 4 m/s.`});
   if(TK.suc<p.parr-0.05)issues.push({c:'crit',t:`Llegada al tanque con ${fmt(TK.suc)} kg/cm², por debajo de ${fmt(p.parr)}.`});
   if(!TR.hasZ)issues.unshift({c:'crit',t:'La traza no tiene cotas. El cálculo supone terreno plano y no es válido: obtené las cotas antes de usar los resultados.'});
+  {const ceil=HOSE[D]?.qd;if(ceil&&p.Qd>ceil)issues.push({c:'warn',t:`El caudal de diseño (${p.Qd} m³/h) supera el techo práctico del ${D}" (${ceil} m³/h).`})}
+  if(TK.suc>p.parr+1.5)issues.push({c:'warn',t:`Llega al tanque con ${fmt(TK.suc,1)} kg/cm², bastante más que lo necesario: conviene una válvula reguladora en la llegada o bajar la impulsión de la última estación.`});
   ST.forEach(s=>{if(s.impD>p.pmax+0.05)issues.push({c:'warn',t:`${s.id} necesitaría ${fmt(s.impD,1)} kg/cm² con el caudal de diseño (${p.Qd} m³/h): supera el máximo.`})});
   return {S,ST,TK,pr,J,V,p,dev,issues,G,RULE}}
 
@@ -406,7 +408,7 @@ $('dlCsv').onclick=()=>download('estaciones.csv',csv(),'text/csv');
 $('cpKml').onclick=async()=>{const t=$('kmlOut');t.hidden=false;try{await navigator.clipboard.writeText(t.value);$('expMsg').textContent='KML copiado.'}catch(e){t.focus();t.select();$('expMsg').textContent='Seleccioné el texto: copialo con Ctrl+C.'}};
 
 // ---------- interfaz ----------
-function setHose(d){D=d;document.querySelectorAll('[data-d]').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.d===d)));const h=HOSE[d];$('di').value=h.di;$('rat').value=h.rat;$('pmax').value=h.pmax;$('pdes').value=h.pdes;$('qd').value=h.qd;$('hoseNote').textContent=h.note;render()}
+function setHose(d){D=d;document.querySelectorAll('[data-d]').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.d===d)));const h=HOSE[d];$('di').value=h.di;$('rat').value=h.rat;$('pmax').value=h.pmax;$('pdes').value=h.pdes;$('hoseNote').textContent=h.note;render()}
 document.querySelectorAll('[data-d]').forEach(b=>b.onclick=()=>setHose(+b.dataset.d));
 ['q','qd','cd','pdes','di','c','rat','pmax','psuc','pcr','parr','eta','cel','lkwh'].forEach(id=>$(id).addEventListener('input',()=>{clearTimeout(window._t);window._t=setTimeout(render,150)}));
 function loaded(tr,name){TR=tr;DEMO=false;const km=fmt(tr.L/1000);
