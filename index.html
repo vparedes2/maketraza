@@ -246,13 +246,21 @@ function msg(t,cls=''){const m=$('trMsg');m.className='msg '+cls;m.innerHTML=t}
 function params(){return{Q:+$('q').value,DI:+$('di').value/1000,C:+$('c').value,rat:+$('rat').value,pmax:+$('pmax').value,psuc:+$('psuc').value,pcr:+$('pcr').value,parr:+$('parr').value,eta:+$('eta').value,cel:+$('cel').value,lkwh:+$('lkwh').value}}
 function solve(){const p=params();const S=resample(TR,10);const n=S.length;const Qs=p.Q/3600,A=Math.PI*p.DI*p.DI/4,V=Qs/A;
   const J=10.67*Math.pow(Qs,1.852)/(Math.pow(p.C,1.852)*Math.pow(p.DI,4.87)); // m/m
-  const G=10.2;const st=[0];const issues=[];let i0=0,guard=0;
-  while(guard++<200){const z0=S[i0].z,H0=z0+p.pmax*G;let last=-1,viol=-1;
-    for(let j=i0+1;j<n;j++){const pr=(H0-J*(S[j].x-S[i0].x)-S[j].z)/G;if(pr>=p.psuc)last=j;if(pr<p.pcr){viol=j;break}}
-    if(viol<0){const pe=(H0-J*(S[n-1].x-S[i0].x)-S[n-1].z)/G;if(pe>=p.parr)break;}
-    if(last<=i0+5){issues.push({c:'crit',t:`Desde km ${fmt(S[i0].x/1000)} la línea no puede avanzar ni con ${fmt(p.pmax,1)} kg/cm²: la pendiente supera lo que la manguera admite. Revisá la traza o el caudal.`});break}
-    // si el corte fue por llegada insuficiente, la estación va en el último punto con succión suficiente
-    st.push(last);i0=last}
+  const G=10.2;const issues=[];
+  // ubicación voraz con una presión de diseño Pd: cada estación lo más lejos posible
+  function place(Pd){const st=[0];let i0=0,guard=0,fail=false;
+    while(guard++<300){const z0=S[i0].z,H0=z0+Pd*G;let last=-1,viol=-1;
+      for(let j=i0+1;j<n;j++){const pr=(H0-J*(S[j].x-S[i0].x)-S[j].z)/G;if(pr>=p.psuc)last=j;if(pr<p.pcr){viol=j;break}}
+      if(viol<0){const pe=(H0-J*(S[n-1].x-S[i0].x)-S[n-1].z)/G;if(pe>=p.parr)break}
+      if(last<=i0+5){fail=true;break}
+      st.push(last);i0=last}
+    return{st,fail,i0}}
+  const base=place(p.pmax);
+  if(base.fail)issues.push({c:'crit',t:`Desde km ${fmt(S[base.i0].x/1000)} la línea no puede avanzar ni con ${fmt(p.pmax,1)} kg/cm²: la pendiente supera lo que la manguera admite. Revisá la traza o el caudal.`});
+  // equilibrado: la menor presión de diseño que mantiene la misma cantidad de estaciones reparte los tramos parejo
+  let st=base.st;
+  if(!base.fail){let lo=p.psuc+0.3,hi=p.pmax;for(let k=0;k<22;k++){const m=(lo+hi)/2;const r=place(m);if(!r.fail&&r.st.length<=base.st.length)hi=m;else lo=m}
+    const bal=place(Math.min(p.pmax,hi+0.02));if(!bal.fail&&bal.st.length===base.st.length)st=bal.st}
   // impulsión mínima necesaria en cada estación
   const ends=st.slice(1).concat([n-1]);const ST=[];
   st.forEach((a,k)=>{const e=ends[k];const z0=S[a].z;let req=0,kreq=a;
@@ -359,13 +367,13 @@ function build3D(){if(!R3)R3=init3D();if(!R3)return;const{S,ST,TK,pr,p,dev}=RES;
   // estaciones
   const lab=(t,sub,x,y,z)=>{const e=document.createElement('div');e.innerHTML=t+(sub?`<small>${sub}</small>`:'');$('l3').appendChild(e);R3.labels.push({e,p:new THREE.Vector3(x,y,z)})};
   R3.stations=[];
-  ST.forEach(s=>{const [x,z]=XY[s.i],y=Y(s.z);const pad=new THREE.Mesh(new THREE.BoxGeometry(9,0.8,9),new THREE.MeshLambertMaterial({color:0x8d8a84}));pad.position.set(x,y+0.4,z);g.add(pad);
+  ST.forEach(s=>{const [x,z]=XY[s.i],y=Y(s.z);const pad=new THREE.Mesh(new THREE.BoxGeometry(7,0.8,7),new THREE.MeshLambertMaterial({color:0x8d8a84}));pad.position.set(x,y+0.4,z);g.add(pad);
     [-2,2].forEach(dz=>{const pmp=new THREE.Mesh(new THREE.BoxGeometry(4.5,2.6,2.6),new THREE.MeshLambertMaterial({color:0x3aa34a}));pmp.position.set(x,y+2.1,z+dz);g.add(pmp)});
     const fuel=new THREE.Mesh(new THREE.CylinderGeometry(1.2,1.2,4,16),new THREE.MeshLambertMaterial({color:0xf2f2f0}));fuel.rotation.z=Math.PI/2;fuel.position.set(x-3,y+1.7,z+5.5);g.add(fuel);
     const pole=new THREE.Mesh(new THREE.CylinderGeometry(0.25,0.25,12,6),new THREE.MeshLambertMaterial({color:0xdddddd}));pole.position.set(x+3,y+6,z-4);g.add(pole);
     lab(s.id,`km ${fmt(s.x/1000)} · ${fmt(s.imp,1)} kg/cm²`,x,y+9,z);R3.stations.push(new THREE.Vector3(x,y,z))});
-  {const [x,z]=XY[S.length-1],y=Y(TK.z);const tk=new THREE.Mesh(new THREE.CylinderGeometry(8,8,4.5,40),new THREE.MeshLambertMaterial({color:0xa8aeb2}));tk.position.set(x,y+2.25,z);g.add(tk);
-    const w=new THREE.Mesh(new THREE.CircleGeometry(7.7,40),new THREE.MeshLambertMaterial({color:0x2c6f8f}));w.rotation.x=-Math.PI/2;w.position.set(x,y+3.8,z);g.add(w);lab('TK',`km ${fmt(TK.x/1000)} · ${fmt(TK.suc,2)} kg/cm²`,x,y+10,z);R3.stations.push(new THREE.Vector3(x,y,z))}
+  {const [x,z]=XY[S.length-1],y=Y(TK.z);const tk=new THREE.Mesh(new THREE.CylinderGeometry(4.5,4.5,3,40),new THREE.MeshLambertMaterial({color:0xa8aeb2}));tk.position.set(x,y+1.5,z);g.add(tk);
+    const w=new THREE.Mesh(new THREE.CircleGeometry(4.3,40),new THREE.MeshLambertMaterial({color:0x2c6f8f}));w.rotation.x=-Math.PI/2;w.position.set(x,y+2.5,z);g.add(w);lab('TK',`km ${fmt(TK.x/1000)} · ${fmt(TK.suc,2)} kg/cm²`,x,y+10,z);R3.stations.push(new THREE.Vector3(x,y,z))}
   dev.forEach(d=>{const j=S.findIndex(s=>s.x>=d.x);const [x,z]=XY[j],y=Y(S[j].z);const m=new THREE.Mesh(new THREE.ConeGeometry(1.4,4,10),new THREE.MeshLambertMaterial({color:d.t==='V'?0xc62828:0x2a4fa8}));m.position.set(x,y+(d.t==='V'?5:3),z);if(d.t!=='V')m.rotation.x=Math.PI;g.add(m)});
   // encuadre general
   const bb=new THREE.Box3().setFromObject(g),ctr=bb.getCenter(new THREE.Vector3()),size=bb.getSize(new THREE.Vector3());const R=Math.max(size.x,size.z)*0.75+50;
