@@ -195,14 +195,25 @@ function parseKML(txt){const doc=new DOMParser().parseFromString(txt,'text/xml')
     if(nm==='LineString'){const c=[...el.children].find(x=>x.localName==='coordinates');if(c){const pts=parse(c.textContent);if(pts.length>1)lines.push(pts)}}
     if(nm==='Track'){const pts=[...el.children].filter(x=>x.localName==='coord').map(x=>{const a=x.textContent.trim().split(/\s+/).map(Number);return{lon:a[0],lat:a[1],z:a[2]||0}});if(pts.length>1)lines.push(pts)}});
   if(!lines.length)throw new Error('El archivo no tiene ninguna ruta (LineString). Dibujá la traza con "Agregar ruta" en Google Earth; los polígonos y marcadores se ignoran.');
-  // empezar por la línea más larga y sumar solo las que continúan (extremos a menos de 300 m)
+  // empezar por la línea más larga y sumar solo las que continúan (extremos a menos de 60 m)
   const len=l=>l.reduce((a,p,i)=>i?a+hav(l[i-1],p):0,0);lines.sort((a,b)=>len(b)-len(a));
   let chain=lines.shift(),skipped=0,grow=true;
   while(grow&&lines.length){grow=false;let best=null;
     lines.forEach((l,i)=>{const h=chain[0],e=chain[chain.length-1],a=l[0],b=l[l.length-1];
-      [[hav(e,a),'ea'],[hav(e,b),'eb'],[hav(h,b),'hb'],[hav(h,a),'ha']].forEach(([d,k])=>{if(d<300&&(!best||d<best.d))best={d,k,i}})});
+      [[hav(e,a),'ea'],[hav(e,b),'eb'],[hav(h,b),'hb'],[hav(h,a),'ha']].forEach(([d,k])=>{if(d<60&&(!best||d<best.d))best={d,k,i}})});
     if(best){let l=lines.splice(best.i,1)[0];if(best.k==='eb'||best.k==='ha')l=l.slice().reverse();chain=best.k[0]==='e'?chain.concat(l):l.concat(chain);grow=true}}
-  skipped=lines.length;window._kmlSkipped=skipped;
+  skipped=lines.length;window._kmlSkipped=skipped;window._kmlChained=0;
+  // marcadores o polígonos con nombre de tanque / captación: recortan la traza
+  const marks=[];[...doc.getElementsByTagName('*')].filter(e=>e.localName==='Placemark').forEach(pm=>{const nm=([...pm.children].find(x=>x.localName==='name')?.textContent||'').trim();
+    const co=[...pm.getElementsByTagName('*')].filter(e=>e.localName==='coordinates'&&e.parentNode.localName!=='LineString');if(!co.length)return;const pts=parse(co[0].textContent);if(!pts.length)return;
+    const c={lat:pts.reduce((a,p)=>a+p.lat,0)/pts.length,lon:pts.reduce((a,p)=>a+p.lon,0)/pts.length};
+    const isPoly=co[0].parentNode.localName==='LinearRing';
+    if(/^(tk|tq)\b|tanque|pulm|dest|pileta/i.test(nm)||(isPoly&&!/cap/i.test(nm)))marks.push({t:'TK',...c,nm});else if(/^cap\b|capt|toma|bomba/i.test(nm))marks.push({t:'CAP',...c,nm})});
+  const near=m=>{let bi=0,bd=1e18;chain.forEach((p,i)=>{const d=hav(p,m);if(d<bd){bd=d;bi=i}});return{bi,bd}};
+  const tk=marks.find(m=>m.t==='TK'),cap=marks.find(m=>m.t==='CAP');window._kmlCut='';
+  if(tk||cap){let a=0,b=chain.length-1;if(cap){const n=near(cap);if(n.bd<500)a=n.bi}if(tk){const n=near(tk);if(n.bd<500)b=n.bi}
+    if(a>b){chain=chain.slice().reverse();const L=chain.length-1;[a,b]=[L-a,L-b]}
+    if(b-a>1){chain=chain.slice(a,b+1);window._kmlCut=(tk?` Traza cortada en el tanque "${tk.nm||'polígono'}".`:'')+(cap?` Inicio en "${cap.nm}".`:'')}}
   const hasZ=chain.some(p=>Math.abs(p.z)>1);return buildTrace(chain,hasZ)}
 function parseGPX(txt){const doc=new DOMParser().parseFromString(txt,'text/xml');const pts=[...doc.querySelectorAll('trkpt, rtept')].map(n=>({lat:+n.getAttribute('lat'),lon:+n.getAttribute('lon'),z:+(n.querySelector('ele')?.textContent||0)}));if(pts.length<2)throw new Error('El GPX no tiene puntos de recorrido.');return buildTrace(pts,pts.some(p=>p.z>1))}
 function parseCSV(txt){const rows=txt.trim().split(/\r?\n/).map(r=>r.split(/[;,\t]/).map(s=>s.trim()));const head=rows[0].map(s=>s.toLowerCase());const num=r=>r.map(s=>parseFloat(s.replace(',','.')));
@@ -383,7 +394,7 @@ function setHose(d){D=d;document.querySelectorAll('[data-d]').forEach(b=>b.setAt
 document.querySelectorAll('[data-d]').forEach(b=>b.onclick=()=>setHose(+b.dataset.d));
 ['q','di','c','rat','pmax','psuc','pcr','parr','eta','cel','lkwh'].forEach(id=>$(id).addEventListener('input',()=>{clearTimeout(window._t);window._t=setTimeout(render,150)}));
 function loaded(tr,name){TR=tr;DEMO=false;const km=fmt(tr.L/1000);
-  const sk=window._kmlSkipped?` Se ignoraron ${window._kmlSkipped} líneas sueltas que no continúan la traza.`:'';window._kmlSkipped=0;
+  const sk=(window._kmlSkipped?` Se ignoraron ${window._kmlSkipped} líneas que no continúan la traza.`:'')+(window._kmlCut||'');window._kmlSkipped=0;window._kmlCut='';
   if(tr.hasZ)msg(`<b>${name}</b>: ${km} km, ${tr.pts.length} puntos, con cotas.`+sk);else msg(`<b>${name}</b>: ${km} km, pero <b>sin cotas</b>. Obtené las cotas del terreno o cargá un CSV de relevamiento.`+sk,'crit');
   $('elevBox').hidden=!tr.geo;$('elev').textContent=tr.hasZ?'Reemplazar con cotas de internet':'Obtener cotas reales';if(!tr.hasZ&&tr.geo)$('elev').click();$('csvz').hidden=!tr.geo;render()}
 async function onFile(f){if(!f)return;try{loaded(await readFile(f),f.name)}catch(e){msg(e.message,'crit')}}
