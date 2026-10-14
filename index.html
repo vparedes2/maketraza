@@ -107,17 +107,21 @@ footer a{color:var(--water)}
       <div class="field" id="csvz" hidden><label for="zfile">Cotas de relevamiento (CSV km, cota), opcional</label><input type="file" id="zfile" accept=".csv,.txt"></div>
 
       <h2>2 · Caudal y manguera</h2>
-      <div class="field"><label for="q">Caudal de diseño (m³/h)</label><input type="number" id="q" value="1050" min="50" max="3000" step="10"><span class="note">Usá el caudal máximo que la línea deberá mover (1.050 en 12"), no el de operación diaria: con el de operación sale el mínimo teórico de estaciones, sin margen.</span></div>
+      <div class="row2">
+        <div class="field"><label for="q">Caudal de operación (m³/h)</label><input type="number" id="q" value="860" min="50" max="3000" step="10"></div>
+        <div class="field"><label for="qd">Caudal de diseño, máx. (m³/h)</label><input type="number" id="qd" value="1050" min="50" max="3000" step="10"></div></div>
       <div class="field"><span class="lab">Diámetro de layflat</span>
         <div class="seg" role="group" aria-label="Diámetro"><button data-d="12" aria-pressed="true">12"</button><button data-d="14" aria-pressed="false">14"</button><button data-d="16" aria-pressed="false">16"</button></div></div>
       <div class="row2">
         <div class="field"><label for="di">Diámetro interno (mm)</label><input type="number" id="di" value="305" step="1"></div>
-        <div class="field"><label for="c">C Hazen-Williams</label><select id="c"><option value="150" selected>150 · diseño</option><option value="160">160 · verificación</option></select></div>
+        <div class="field"><label for="c">C operación / C diseño</label><div class="row2"><input type="number" id="c" value="160" step="5" aria-label="C de operación (calibrado)"><input type="number" id="cd" value="150" step="5" aria-label="C de diseño (conservador)"></div></div>
       </div>
       <div class="row2">
         <div class="field"><label for="rat">Presión de trabajo (psi)</label><input type="number" id="rat" value="200" step="5"></div>
         <div class="field"><label for="pmax">Impulsión máx. (kg/cm²)</label><input type="number" id="pmax" value="12" step="0.1"></div>
       </div>
+      <div class="field"><label for="pdes">Impulsión de diseño con margen (kg/cm²)</label><input type="number" id="pdes" value="10.5" step="0.1"></div>
+      <div class="msg" id="rule"><b>Regla de dimensionamiento.</b> La cantidad de rebombeos es la mayor de dos verificaciones: <b>A</b>) caudal de diseño con C de operación, impulsando hasta el máximo; <b>B</b>) caudal de operación con C de diseño, impulsando solo hasta la presión con margen. Las presiones de la tabla son las de operación.</div>
       <p class="note" id="hoseNote"></p>
 
       <h2>3 · Criterios</h2>
@@ -166,9 +170,9 @@ const $=id=>document.getElementById(id);
 const fmt=(v,d=2)=>Number.isFinite(v)?v.toFixed(d).replace('.',','):'—';
 const fmtI=v=>Math.round(v).toLocaleString('es-AR');
 const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-const HOSE={12:{di:305,rat:200,pmax:12,note:'12": 200 psi (14 kg/cm²) según manual; operación hasta 12 kg/cm². Techo práctico de caudal ≈ 1.050 m³/h.'},
-            14:{di:356,rat:150,pmax:9,note:'14": presión de trabajo y diámetro interno ESTIMADOS. Cargá los valores de la ficha del fabricante.'},
-            16:{di:406,rat:150,pmax:6.9,note:'16": 150 psi según manual; impulsión máx. con margen 6,9 kg/cm². Techo práctico ≈ 1.865 m³/h.'}};
+const HOSE={12:{di:305,rat:200,pmax:12,pdes:10.5,qd:1050,note:'12": 200 psi (14 kg/cm²) según manual; operación hasta 12 kg/cm². Techo práctico de caudal ≈ 1.050 m³/h.'},
+            14:{di:356,rat:150,pmax:9,pdes:7.9,qd:1400,note:'14": presión de trabajo y diámetro interno ESTIMADOS. Cargá los valores de la ficha del fabricante.'},
+            16:{di:406,rat:150,pmax:6.9,pdes:6.0,qd:1865,note:'16": 150 psi según manual; impulsión máx. con margen 6,9 kg/cm². Techo práctico ≈ 1.865 m³/h.'}};
 let D=12, TR=null, DEMO=true, RES=null;
 
 // ---------- geometría ----------
@@ -243,24 +247,26 @@ async function fetchElevFrom(src){const P=TR.pts;const step=Math.max(src==='otd'
 function msg(t,cls=''){const m=$('trMsg');m.className='msg '+cls;m.innerHTML=t}
 
 // ---------- cálculo ----------
-function params(){return{Q:+$('q').value,DI:+$('di').value/1000,C:+$('c').value,rat:+$('rat').value,pmax:+$('pmax').value,psuc:+$('psuc').value,pcr:+$('pcr').value,parr:+$('parr').value,eta:+$('eta').value,cel:+$('cel').value,lkwh:+$('lkwh').value}}
+function params(){return{Q:+$('q').value,Qd:+$('qd').value,Cd:+$('cd').value,pdes:+$('pdes').value,DI:+$('di').value/1000,C:+$('c').value,rat:+$('rat').value,pmax:+$('pmax').value,psuc:+$('psuc').value,pcr:+$('pcr').value,parr:+$('parr').value,eta:+$('eta').value,cel:+$('cel').value,lkwh:+$('lkwh').value}}
 function solve(){const p=params();const S=resample(TR,10);const n=S.length;const Qs=p.Q/3600,A=Math.PI*p.DI*p.DI/4,V=Qs/A;
-  const J=10.67*Math.pow(Qs,1.852)/(Math.pow(p.C,1.852)*Math.pow(p.DI,4.87)); // m/m
+  const HW=(q,c)=>10.67*Math.pow(q/3600,1.852)/(Math.pow(c,1.852)*Math.pow(p.DI,4.87));const J=HW(p.Q,p.C),JA=HW(p.Qd,p.C),JB=HW(p.Q,p.Cd); // m/m
   const G=10.2;const issues=[];
   // ubicación voraz con una presión de diseño Pd: cada estación lo más lejos posible
-  function place(Pd){const st=[0];let i0=0,guard=0,fail=false;
+  function place(Pd,J){const st=[0];let i0=0,guard=0,fail=false;
     while(guard++<300){const z0=S[i0].z,H0=z0+Pd*G;let last=-1,viol=-1;
       for(let j=i0+1;j<n;j++){const pr=(H0-J*(S[j].x-S[i0].x)-S[j].z)/G;if(pr>=p.psuc)last=j;if(pr<p.pcr){viol=j;break}}
       if(viol<0){const pe=(H0-J*(S[n-1].x-S[i0].x)-S[n-1].z)/G;if(pe>=p.parr)break}
       if(last<=i0+5){fail=true;break}
       st.push(last);i0=last}
     return{st,fail,i0}}
-  const base=place(p.pmax);
-  if(base.fail)issues.push({c:'crit',t:`Desde km ${fmt(S[base.i0].x/1000)} la línea no puede avanzar ni con ${fmt(p.pmax,1)} kg/cm²: la pendiente supera lo que la manguera admite. Revisá la traza o el caudal.`});
-  // equilibrado: la menor presión de diseño que mantiene la misma cantidad de estaciones reparte los tramos parejo
+  const rA=place(p.pmax,JA),rB=place(Math.min(p.pdes,p.pmax),JB);
+  const useB=!rB.fail&&(rA.fail||rB.st.length>rA.st.length);const drv=useB?{r:rB,J:JB,lim:Math.min(p.pdes,p.pmax),t:'B'}:{r:rA,J:JA,lim:p.pmax,t:'A'};
+  const base=drv.r;
+  if(base.fail)issues.push({c:'crit',t:`Desde km ${fmt(S[base.i0].x/1000)} la línea no puede avanzar ni con ${fmt(drv.lim,1)} kg/cm²: la pendiente supera lo que la manguera admite. Revisá la traza o el caudal.`});
   let st=base.st;
-  if(!base.fail){let lo=p.psuc+0.3,hi=p.pmax;for(let k=0;k<22;k++){const m=(lo+hi)/2;const r=place(m);if(!r.fail&&r.st.length<=base.st.length)hi=m;else lo=m}
-    const bal=place(Math.min(p.pmax,hi+0.02));if(!bal.fail&&bal.st.length===base.st.length)st=bal.st}
+  if(!base.fail){let lo=p.psuc+0.3,hi=drv.lim;for(let k=0;k<22;k++){const m=(lo+hi)/2;const r=place(m,drv.J);if(!r.fail&&r.st.length<=base.st.length)hi=m;else lo=m}
+    const bal=place(Math.min(drv.lim,hi+0.02),drv.J);if(!bal.fail&&bal.st.length===base.st.length)st=bal.st}
+  const RULE={t:drv.t,nA:rA.fail?'—':rA.st.length-1,nB:rB.fail?'—':rB.st.length-1};
   // impulsión mínima necesaria en cada estación
   const ends=st.slice(1).concat([n-1]);const ST=[];
   st.forEach((a,k)=>{const e=ends[k];const z0=S[a].z;let req=0,kreq=a;
@@ -268,7 +274,8 @@ function solve(){const p=params();const S=resample(TR,10);const n=S.length;const
     const imp=Math.min(Math.max(req,0.5),p.pmax+1e-9);
     let pmin=99,kmin=a,hi=-1e9,drop=0;for(let j=a+1;j<=e;j++){const pr=(z0+imp*G-J*(S[j].x-S[a].x)-S[j].z)/G;if(j<e&&pr<pmin){pmin=pr;kmin=j}hi=Math.max(hi,S[j].z);drop=Math.max(drop,hi-S[j].z)}
     const sucNext=(z0+imp*G-J*(S[e].x-S[a].x)-S[e].z)/G;
-    ST.push({i:a,e,x:S[a].x,z:z0,lat:S[a].lat,lon:S[a].lon,imp,sucNext,pmin,kmin:S[kmin].x,L:S[e].x-S[a].x,drop})});
+    let reqD=0;for(let j=a+1;j<=e;j++){const need=(j===e?(e===n-1?p.parr:p.psuc):p.pcr);reqD=Math.max(reqD,(S[j].z-z0+JA*(S[j].x-S[a].x))/G+need)}
+    ST.push({impD:reqD,i:a,e,x:S[a].x,z:z0,lat:S[a].lat,lon:S[a].lon,imp,sucNext,pmin,kmin:S[kmin].x,L:S[e].x-S[a].x,drop})});
   ST.forEach((s,k)=>{s.id=k===0?'CAP':'R'+k;s.suc=k===0?null:ST[k-1].sucNext;const dp=s.imp-(s.suc??0.25);s.kw=1000*9.81*Qs*dp*G/1000/p.eta;s.lph=s.kw*p.lkwh});
   const last=S[n-1];const TK={id:'TK',x:last.x,z:last.z,lat:last.lat,lon:last.lon,suc:ST[ST.length-1].sucNext};
   // presión en cada punto
@@ -284,7 +291,8 @@ function solve(){const p=params();const S=resample(TR,10);const n=S.length;const
   if(V>4)issues.push({c:'crit',t:`Velocidad ${fmt(V)} m/s: supera 4 m/s. Subí el diámetro o bajá el caudal.`});else if(V>3.8)issues.push({c:'warn',t:`Velocidad ${fmt(V)} m/s, cerca del límite de 4 m/s.`});
   if(TK.suc<p.parr-0.05)issues.push({c:'crit',t:`Llegada al tanque con ${fmt(TK.suc)} kg/cm², por debajo de ${fmt(p.parr)}.`});
   if(!TR.hasZ)issues.unshift({c:'crit',t:'La traza no tiene cotas. El cálculo supone terreno plano y no es válido: obtené las cotas antes de usar los resultados.'});
-  return {S,ST,TK,pr,J,V,p,dev,issues,G}}
+  ST.forEach(s=>{if(s.impD>p.pmax+0.05)issues.push({c:'warn',t:`${s.id} necesitaría ${fmt(s.impD,1)} kg/cm² con el caudal de diseño (${p.Qd} m³/h): supera el máximo.`})});
+  return {S,ST,TK,pr,J,V,p,dev,issues,G,RULE}}
 
 // ---------- dibujo ----------
 function ramp(v){const s=[[0,[43,108,214]],[0.35,[47,191,154]],[0.7,[232,197,71]],[1,[239,83,80]]];v=Math.max(0,Math.min(1,v));for(let i=0;i<3;i++){const[a,ca]=s[i],[b,cb]=s[i+1];if(v<=b){const t=(v-a)/(b-a);return`rgb(${ca.map((c,k)=>Math.round(c+(cb[k]-c)*t)).join(',')})`}}return'rgb(239,83,80)'}
@@ -311,15 +319,15 @@ function drawPlan(){const{S,ST,TK,pr,p}=RES;const c=$('plan');const[x,W,H]=setup
   const mScale=[200,500,1000,2000,5000].find(v=>v*sc>60)||5000;x.strokeStyle=fg;x.lineWidth=2;x.beginPath();x.moveTo(16,H-14);x.lineTo(16+mScale*sc,H-14);x.stroke();x.fillStyle=css('--muted');x.font='11px "IBM Plex Mono", monospace';x.fillText(mScale>=1000?mScale/1000+' km':mScale+' m',16,H-20)}
 
 // ---------- tablas ----------
-function render(){if(!TR)return;RES=solve();const{S,ST,TK,J,V,p,dev,issues,G}=RES;const Ltot=S[S.length-1].x;
+function render(){if(!TR)return;RES=solve();const{S,ST,TK,J,V,p,dev,issues,G,RULE}=RES;$('rule').innerHTML=`<b>Regla de dimensionamiento.</b> A) ${p.Qd} m³/h, C ${p.C}, hasta ${fmt(p.pmax,1)} kg/cm² → <b>${RULE.nA}</b> rebombeos. B) ${p.Q} m³/h, C ${p.Cd}, hasta ${fmt(p.pdes,1)} kg/cm² → <b>${RULE.nB}</b> rebombeos. Se adopta la ${RULE.t} (la más exigente). Las presiones de la tabla son las de operación (${p.Q} m³/h, C ${p.C}).`;const Ltot=S[S.length-1].x;
   const kw=ST.reduce((a,s)=>a+s.kw,0),lph=ST.reduce((a,s)=>a+s.lph,0);const tmin=Math.round(Ltot/V/60);
   const K=(l,v,u)=>`<div class="kpi"><span>${l}</span><b>${v}</b><small>${u}</small></div>`;
   $('kpis').innerHTML=K('Longitud',fmt(Ltot/1000),'km')+K('Rebombeos',ST.length-1,'+ CAP')+K('Fricción',fmt(J*1000,1),'m/km')+K('Velocidad',fmt(V),'m/s')+K('Potencia al eje',fmtI(kw),'kW')+K('Gasoil',fmtI(lph),'L/h')+K('Tránsito',Math.floor(tmin/60)+' h '+String(tmin%60).padStart(2,'0'),'')+K('Cota mín / máx',Math.round(Math.min(...S.map(s=>s.z)))+'–'+Math.round(Math.max(...S.map(s=>s.z))),'m');
   $('alerts').innerHTML=issues.map(i=>`<div class="msg ${i.c==='crit'?'crit':'warn'}">${i.t}</div>`).join('');
   const cls=(v,lo,hi)=>v<lo?'cr':v<hi?'wa':'ok';
-  let h='<thead><tr><th>Estación</th><th>km</th><th>Cota (m)</th><th>Succión (kg/cm²)</th><th>Impulsión (kg/cm²)</th><th>Potencia (kW)</th><th>Gasoil (L/h)</th><th>Tramo (km)</th><th>P mín. tramo</th><th>Cierre mín. (s)</th><th>Coordenadas</th></tr></thead><tbody>';
-  ST.forEach(s=>{h+=`<tr><td class="id">${s.id}</td><td>${fmt(s.x/1000)}</td><td>${Math.round(s.z)}</td><td class="${s.suc==null?'':cls(s.suc,1.4,1.5)}">${s.suc==null?'río':fmt(s.suc)}</td><td class="${s.imp>p.pmax-0.01?'wa':''}">${fmt(s.imp)}</td><td>${fmtI(s.kw)}</td><td>${fmtI(s.lph)}</td><td>${fmt(s.L/1000)}</td><td class="${cls(s.pmin,p.pcr,p.pcr*2)}">${fmt(s.pmin)} <small>km ${fmt(s.kmin/1000,1)}</small></td><td>${Math.round(Math.max(20,4*s.L/p.cel))}</td><td>${s.lat!=null?s.lat.toFixed(5)+', '+s.lon.toFixed(5):'—'}</td></tr>`});
-  h+=`<tr><td class="id">TK</td><td>${fmt(TK.x/1000)}</td><td>${Math.round(TK.z)}</td><td class="${cls(TK.suc,p.parr-0.05,p.parr)}">${fmt(TK.suc)}</td><td colspan="6" style="text-align:left;color:var(--muted)">Tanque de destino · ingreso por cuello de cisne</td><td>${TK.lat!=null?TK.lat.toFixed(5)+', '+TK.lon.toFixed(5):'—'}</td></tr></tbody>`;
+  let h='<thead><tr><th>Estación</th><th>km</th><th>Cota (m)</th><th>Succión (kg/cm²)</th><th>Impulsión (kg/cm²)</th><th>Imp. a Q diseño</th><th>Potencia (kW)</th><th>Gasoil (L/h)</th><th>Tramo (km)</th><th>P mín. tramo</th><th>Cierre mín. (s)</th><th>Coordenadas</th></tr></thead><tbody>';
+  ST.forEach(s=>{h+=`<tr><td class="id">${s.id}</td><td>${fmt(s.x/1000)}</td><td>${Math.round(s.z)}</td><td class="${s.suc==null?'':cls(s.suc,1.4,1.5)}">${s.suc==null?'río':fmt(s.suc)}</td><td class="${s.imp>p.pmax-0.01?'wa':''}">${fmt(s.imp)}</td><td class="${s.impD>p.pmax+0.05?'cr':''}">${fmt(s.impD,1)}</td><td>${fmtI(s.kw)}</td><td>${fmtI(s.lph)}</td><td>${fmt(s.L/1000)}</td><td class="${cls(s.pmin,p.pcr,p.pcr*2)}">${fmt(s.pmin)} <small>km ${fmt(s.kmin/1000,1)}</small></td><td>${Math.round(Math.max(20,4*s.L/p.cel))}</td><td>${s.lat!=null?s.lat.toFixed(5)+', '+s.lon.toFixed(5):'—'}</td></tr>`});
+  h+=`<tr><td class="id">TK</td><td>${fmt(TK.x/1000)}</td><td>${Math.round(TK.z)}</td><td class="${cls(TK.suc,p.parr-0.05,p.parr)}">${fmt(TK.suc)}</td><td colspan="7" style="text-align:left;color:var(--muted)">Tanque de destino · ingreso por cuello de cisne</td><td>${TK.lat!=null?TK.lat.toFixed(5)+', '+TK.lon.toFixed(5):'—'}</td></tr></tbody>`;
   $('tbl').innerHTML=h;
   const pmin=Math.min(...ST.map(s=>s.pmin)),pmx=Math.max(...ST.map(s=>s.imp)),smin=Math.min(...ST.slice(1).map(s=>s.suc),TK.suc);const jk=p.cel*V/9.81/G;const Lmax=Math.max(...ST.map(s=>s.L));
   const C=(l,v,c)=>`<div><span>${l}</span><b class="${c}">${v}</b></div>`;
@@ -398,9 +406,9 @@ $('dlCsv').onclick=()=>download('estaciones.csv',csv(),'text/csv');
 $('cpKml').onclick=async()=>{const t=$('kmlOut');t.hidden=false;try{await navigator.clipboard.writeText(t.value);$('expMsg').textContent='KML copiado.'}catch(e){t.focus();t.select();$('expMsg').textContent='Seleccioné el texto: copialo con Ctrl+C.'}};
 
 // ---------- interfaz ----------
-function setHose(d){D=d;document.querySelectorAll('[data-d]').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.d===d)));const h=HOSE[d];$('di').value=h.di;$('rat').value=h.rat;$('pmax').value=h.pmax;$('hoseNote').textContent=h.note;render()}
+function setHose(d){D=d;document.querySelectorAll('[data-d]').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.d===d)));const h=HOSE[d];$('di').value=h.di;$('rat').value=h.rat;$('pmax').value=h.pmax;$('pdes').value=h.pdes;$('qd').value=h.qd;$('hoseNote').textContent=h.note;render()}
 document.querySelectorAll('[data-d]').forEach(b=>b.onclick=()=>setHose(+b.dataset.d));
-['q','di','c','rat','pmax','psuc','pcr','parr','eta','cel','lkwh'].forEach(id=>$(id).addEventListener('input',()=>{clearTimeout(window._t);window._t=setTimeout(render,150)}));
+['q','qd','cd','pdes','di','c','rat','pmax','psuc','pcr','parr','eta','cel','lkwh'].forEach(id=>$(id).addEventListener('input',()=>{clearTimeout(window._t);window._t=setTimeout(render,150)}));
 function loaded(tr,name){TR=tr;DEMO=false;const km=fmt(tr.L/1000);
   const sk=(window._kmlSkipped?` Se ignoraron ${window._kmlSkipped} líneas que no continúan la traza.`:'')+(window._kmlCut||'');window._kmlSkipped=0;window._kmlCut='';
   if(tr.hasZ)msg(`<b>${name}</b>: ${km} km, ${tr.pts.length} puntos, con cotas.`+sk);else msg(`<b>${name}</b>: ${km} km, pero <b>sin cotas</b>. Obtené las cotas del terreno o cargá un CSV de relevamiento.`+sk,'crit');
